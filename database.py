@@ -11,6 +11,20 @@ import config
 
 logger = logging.getLogger(__name__)
 
+# Whitelist for SQL field names to prevent SQL injection
+ALLOWED_EXERCISE_FIELDS = {
+    'walking_sats_per_km', 'cycling_sats_per_km', 'running_sats_per_km',
+    'swimming_sats_per_km', 'weight_sats_per_kg'
+}
+ALLOWED_TOTAL_FIELDS = {
+    'total_walking_km', 'total_cycling_km', 'total_running_km',
+    'total_swimming_km', 'total_weight_kg'
+}
+ALLOWED_RANKING_FIELDS = {
+    'total_walking_km', 'total_cycling_km', 'total_running_km',
+    'total_swimming_km', 'total_weight_kg', 'total_donated_sats', 'streak_days'
+}
+
 
 class DatabaseManager:
     """데이터베이스 연결 관리 (싱글톤 패턴)"""
@@ -154,6 +168,10 @@ async def update_donation_setting(user_id: str, exercise_type: str, sats_amount:
     """기부 설정 업데이트"""
     try:
         field = config.EXERCISE_TYPES[exercise_type]['db_field']
+        # Validate field name against whitelist to prevent SQL injection
+        if field not in ALLOWED_EXERCISE_FIELDS:
+            raise ValueError(f"Invalid field name: {field}")
+        
         db = await db_manager.get_connection()
         await db.execute(f'''
             UPDATE users SET {field} = ? WHERE user_id = ?
@@ -171,6 +189,10 @@ async def log_exercise(user_id: str, exercise_type: str, value: float, memo: str
     try:
         unit = config.EXERCISE_TYPES[exercise_type]['unit']
         total_field = config.EXERCISE_TYPES[exercise_type]['total_field']
+        
+        # Validate total_field name against whitelist to prevent SQL injection
+        if total_field not in ALLOWED_TOTAL_FIELDS:
+            raise ValueError(f"Invalid total field name: {total_field}")
         
         db = await db_manager.get_connection()
         
@@ -274,6 +296,9 @@ async def get_leaderboard(category: str = 'distance', limit: int = 10) -> List[a
             '''
         elif category in ['walking', 'cycling', 'running', 'swimming']:
             field = f'total_{category}_km'
+            # Validate field name against whitelist to prevent SQL injection
+            if field not in ALLOWED_RANKING_FIELDS:
+                raise ValueError(f"Invalid ranking field name: {field}")
             query = f'''
                 SELECT user_id, username, {field} as total
                 FROM users

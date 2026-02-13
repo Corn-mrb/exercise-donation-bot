@@ -4,6 +4,7 @@ Exercise Donation Bot - Main Bot
 """
 import discord
 from discord import app_commands
+from discord.ext import commands
 from discord.ui import Button, View, Modal, TextInput
 import asyncio
 import logging
@@ -143,6 +144,13 @@ class CustomAmountModal(Modal, title="직접 입력"):
                 await interaction.response.send_message("❌ 0보다 큰 금액을 입력하세요.", ephemeral=True)
                 return
             
+            if amount > config.MAX_DONATION:
+                await interaction.response.send_message(
+                    f"❌ 최대 기부 금액은 {config.MAX_DONATION:,} sats입니다.", 
+                    ephemeral=True
+                )
+                return
+            
             # 사용자 확인/생성
             user = await database.get_user(self.user_id)
             if not user:
@@ -191,6 +199,23 @@ class ExerciseInputModal(Modal, title="운동 기록"):
             value = float(self.value_input.value)
             if value <= 0:
                 await interaction.response.send_message("❌ 0보다 큰 값을 입력하세요.", ephemeral=True)
+                return
+            
+            # Define reasonable limits based on exercise type
+            max_limits = {
+                'walking': 1000,  # km
+                'cycling': 1000,  # km
+                'running': 500,   # km
+                'swimming': 100,  # km
+                'weight': 500     # kg
+            }
+            max_value = max_limits.get(self.exercise_type, 1000)
+            if value > max_value:
+                unit = config.EXERCISE_TYPES[self.exercise_type]['unit']
+                await interaction.response.send_message(
+                    f"❌ 최대 입력 가능한 값은 {max_value:,} {unit}입니다.", 
+                    ephemeral=True
+                )
                 return
             
             memo = self.memo_input.value or None
@@ -313,6 +338,7 @@ async def on_ready():
     await database.init_db()
 
 @bot.tree.command(name="운동설정", description="운동별 기부 설정")
+@commands.cooldown(1, 30, commands.BucketType.user)
 async def donation_setting(interaction: discord.Interaction):
     """운동별 기부 설정"""
     view = ExerciseSelectView('setting', str(interaction.user.id), interaction.user.name)
@@ -346,6 +372,7 @@ async def my_settings(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="운동", description="운동 기록")
+@commands.cooldown(1, 60, commands.BucketType.user)
 async def exercise(interaction: discord.Interaction):
     """운동 기록"""
     view = ExerciseSelectView('record', str(interaction.user.id), interaction.user.name)
@@ -426,6 +453,7 @@ async def leaderboard(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view)
 
 @bot.tree.command(name="운동기부", description="기부 실행")
+@commands.cooldown(1, 300, commands.BucketType.user)
 async def donate(interaction: discord.Interaction):
     """기부 실행 (Phase 2: Lightning 결제)"""
     user = await database.get_user(str(interaction.user.id))
@@ -661,6 +689,29 @@ async def help_command(interaction: discord.Interaction):
     embed.set_footer(text="운동 종류: 걷기, 자전거, 달리기, 수영, 웨이트")
     
     await interaction.response.send_message(embed=embed)
+
+# ============================================
+# Error Handlers
+# ============================================
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    """Handle app command errors"""
+    if isinstance(error, commands.CommandOnCooldown):
+        minutes, seconds = divmod(int(error.retry_after), 60)
+        if minutes > 0:
+            time_msg = f"{minutes}분 {seconds}초"
+        else:
+            time_msg = f"{seconds}초"
+        
+        await interaction.response.send_message(
+            f"⏱️ 이 명령어는 너무 자주 사용할 수 없습니다.\n"
+            f"**{time_msg}** 후에 다시 시도하세요.",
+            ephemeral=True
+        )
+    else:
+        # Re-raise other errors
+        raise error
 
 if __name__ == '__main__':
     try:
